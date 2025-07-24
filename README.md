@@ -61,51 +61,51 @@ Augmented datasets will be stored in: `reports/noisy_dataset`
 
 ## Convert tabular to images using LM-IGTD:
 
-To convert orginal tabular to image using LM-IGTD:
+To convert original (non-augmented) tabular to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=preprocessed --dataset=ionos --interpretability=1
 ```
 
-To convert homogeneous noise-augmented dataset to image using LM-IGTD:
+To convert homogeneous noise-augmented data to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=homogeneous --dataset=ionos --interpretability=1
 ```
 
-To convert heterogeneous noise-augmented dataset to image using LM-IGTD:
+To convert heterogeneous noise-augmented data to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=heterogeneous --dataset=ionos --interpretability=1
 ```
 
-## To train CNN for LM-IGTD images with pytorch:
+## Train CNN on LM-IGTD images with pytorch:
 
-To train CNN for LM-IGTD (original) images with pytorch:
+For original images:
 ```console
 python src/cnn_pytorch.py --noise_type=preprocessed --n_cpus=15 --n_gpus=1 --dataset=ionos
 ```
 
-To train CNN for LM-IGTD (homogeneous) images with pytorch:
+For homogeneous noise images:
 ```console
 python src/cnn_pytorch.py --noise_type=homogeneous --n_cpus=15 --n_gpus=1 --dataset=ionos
 ```
 
-To train CNN for LM-IGTD (heterogeneous) images with pytorch:
+For heterogeneous noise images:
 ```console
 python src/cnn_pytorch.py --noise_type=heterogeneous --n_cpus=15 --n_gpus=1 --dataset=ionos
 ```
 
-## To generate saliency maps in LM-IGTD images:
+## Generate saliency maps (Grad-CAM) in LM-IGTD images:
 
-To generate saliency maps in LM-IGTD (original) images:
+For original images:
 ```console
 python3 src/gradcam_torch.py --noise_type=preprocessed --n_jobs=50  --dataset=ionos
 ```
 
-To generate saliency maps in LM-IGTD (homogeneous) images:
+For homogeneous noise images:
 ```console
 python3 src/gradcam_torch.py --noise_type=homogeneous --n_jobs=50  --dataset=ionos
 ```
 
-To generate saliency maps in LM-IGTD (heterogeneous) images:
+For heterogeneous noise images:
 ```console
 python3 src/gradcam_torch.py --noise_type=heterogeneous --n_jobs=50  --dataset=ionos
 ```
