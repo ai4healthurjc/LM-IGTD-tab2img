@@ -37,7 +37,7 @@ After downloading the tabular datasets, place the files in the following folders
 
 ## Preprocess datasets 
 
-To preprocess binary or multiclass datasets using a chosen encoding method (e.g., count encoding), run:
+To preprocess binary or multiclass datasets (e.g., ionos) using a chosen encoding method (e.g., count encoding), run:
 
 ```console
 python src/main.py --categorical_encoding=count --dataset=ionos --type_dataset=binary
@@ -65,16 +65,25 @@ To convert original (non-augmented) tabular to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=preprocessed --dataset=ionos --interpretability=1
 ```
+Images will be saved to: `reports/tab_to_image/image_preprocessed_ionos/`
+- `data/`: images without interpretability
+- `data_interpretability/`: interpretable images with feature mapping
 
 To convert homogeneous noise-augmented data to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=homogeneous --dataset=ionos --interpretability=1
 ```
+Images will be saved to: `reports/tab_to_image/image_homogeneous_ionos/`
+- `data/`: images without interpretability
+- `data_interpretability/`: interpretable images with feature mapping
 
 To convert heterogeneous noise-augmented data to image using LM-IGTD:
 ```console
 python3 src/tab2img.py --noise_type=heterogeneous --dataset=ionos --interpretability=1
 ```
+Images will be saved to: `reports/tab_to_image/image_heterogeneous_ionos/`
+- `data/`: images without interpretability
+- `data_interpretability/`: interpretable images with feature mapping
 
 ## Train CNN on LM-IGTD images with pytorch:
 
@@ -99,16 +108,20 @@ For original images:
 ```console
 python3 src/gradcam_torch.py --noise_type=preprocessed --n_jobs=50  --dataset=ionos
 ```
+Images will be saved to: `reports/heatmaps/image_preprocessed_ionos`
 
 For homogeneous noise images:
 ```console
 python3 src/gradcam_torch.py --noise_type=homogeneous --n_jobs=50  --dataset=ionos
 ```
+Images will be saved to: `reports/heatmaps/image_homogeneous_ionos`
+
 
 For heterogeneous noise images:
 ```console
 python3 src/gradcam_torch.py --noise_type=heterogeneous --n_jobs=50  --dataset=ionos
 ```
+Images will be saved to: `reports/heatmaps/image_heterogeneous_ionos`
 
 
 
