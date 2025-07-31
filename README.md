@@ -1,6 +1,6 @@
 # LM-IGTD-tab2img
 
-This repository contains the reproducibility materials for the paper: 'LM-IGTD: a 2D image generator for low-dimensional and mixed-type tabular data to leverage the potential of convolutional neural networks'. The study introduces LM-IGTD, a permutation-based framework that transforms low-dimensional and mixed-type tabular data into interpretable 2D images suitable for CNN-based classification. The method incorporates an unsupervised feature augmentation strategy (HoNG and HeNG), as well as type-aware correlation and distance metrics to support mixed data types. Interpretability is achieved through a feature-to-pixel mapping and further enhanced with Grad-CAM saliency analysis.
+This repository contains the reproducibility materials for the paper: 'LM-IGTD: an interpretable 2D image generator for low-dimensional and mixed-type tabular data'. The study introduces LM-IGTD, a permutation-based framework that transforms low-dimensional and mixed-type tabular data into interpretable 2D images suitable for CNN-based classification. The method incorporates an unsupervised feature augmentation strategy (HoNG and HeNG), as well as type-aware correlation and distance metrics to support mixed data types. Interpretability is achieved through a feature-to-pixel mapping and further enhanced with Grad-CAM saliency analysis.
 
 This repository includes the code and experimental setup to reproduce the results across eight benchmark datasets, covering both binary and multiclass classification tasks.
 
