@@ -137,9 +137,10 @@ def generate_feature_correlation_ranking(data, method='pearson',save_path=''):
         corr = gower.gower_dist(np.transpose(data))
     elif method == 'mixed':
 
-        dataset, categorical, numeric = identify_feature_type(data, categorical_threshold=0.005,
-                                                              impute_missing=False)
-        corr = compute_corr_mixed_dataset(data, categorical, save_path)
+        # Feature types follow the same rule used in preprocessing (identify_type_features): binary features,
+        # features with fewer than 10 distinct values or non-numeric values are categorical; the rest are numerical.
+        _, categorical, numeric = identify_type_features(data, discrete_threshold=10)
+        corr = compute_corr_mixed_dataset(data, list(categorical), save_path)
 
     corr = 1 - corr
     corr = np.around(a=corr, decimals=10)
@@ -192,15 +193,9 @@ def generate_matrix_distance_ranking(num_r, num_c,data, method='Euclidean', num=
             cord_dist[i, :] = np.abs(coordinate[i, 0] * np.ones(num) - coordinate[:, 0]) + \
                              np.abs(coordinate[i, 1] * np.ones(num) - coordinate[:, 1])
     elif method == 'Gower':
-        print('Gower')
-        dataset, categorical, numeric = identify_feature_type(data, categorical_threshold=0.05,
-                                                              impute_missing=False)
-        cat_vector = [False] * len(data.iloc[0])
-        col = list(data.columns)
-        for e in categorical:
-            index = col.index(e)
-            cat_vector[index] = True
-        cord_dist = gower_matrix(data, cat_features=cat_vector)
+        # Gower distance between pixel coordinates (row, column). Since both coordinates are numerical, this is
+        # the range-normalised Manhattan distance on the image grid. It depends only on the grid geometry.
+        cord_dist = gower_matrix(coordinate.astype(float))
     else:
         raise ValueError('Method must be Euclidean, Manhattan or Gower')
     # generate the ranking based on distance
@@ -602,7 +597,7 @@ def IGTD(source,
 
 def generate_image_data(data, index, num_row, num_column, coord,
                             original_feature_names, image_folder=None, image_folder_interpretability=None, file_name='',
-                        interpretability=1):
+                        interpretability=1, min_v=None, max_v=None):
     '''
     This function generates the data in image format according to rearrangement indices. It saves the data
     sample-by-sample in both txt files and image files
@@ -642,8 +637,13 @@ def generate_image_data(data, index, num_row, num_column, coord,
 
     data_2 = data.copy()
     data_2 = data_2[:, index]
-    max_v = np.max(data_2)
-    min_v = np.min(data_2)
+    # The grey-level scaling uses fixed bounds (those of the min-max scaled training data, i.e. [0, 1]), so that
+    # the test images are built with exactly the same transformation as the training images.
+    if max_v is None:
+        max_v = np.max(data_2)
+    if min_v is None:
+        min_v = np.min(data_2)
+    data_2 = np.clip(data_2, min_v, max_v)
     data_2 = 255 - (data_2 - min_v) / (max_v - min_v) * 255  # So that black means high value
     image_data = np.empty((num_row, num_column, data_2.shape[0]))
     image_data.fill(np.nan)
@@ -699,7 +699,7 @@ def generate_image_data(data, index, num_row, num_column, coord,
         image_data[:, :, i] = data_i_image
         image_data[:, :, i] = 255 - image_data[:, :, i]
 
-        feature_values = np.zeros(len(coord[0]))
+        feature_values = np.zeros(num_row * num_column)  # blank pixels (no feature assigned) are set to zero
 
         for j in range(len(coord[0])):
             row, col = coord[0][j], coord[1][j]
@@ -717,7 +717,7 @@ def generate_image_data(data, index, num_row, num_column, coord,
             data_i[row, col] = marker
             data_i_copy[row, col] = feature_name
             # Almacena el valor original de la característica
-            feature_values[j] = feature_value
+            feature_values[row * num_column + col] = feature_value
 
         if image_folder is not None:
             # print(image_data)
@@ -865,7 +865,9 @@ def table_to_image(norm_d,
                    error,
                    interpretability,
                    switch_t=0,
-                   min_gain=0.00001
+                   min_gain=0.00001,
+                   test_d=None,
+                   normDir_test=None
                    ):
     '''
     This function converts tabular data into images using the IGTD algorithm. 
@@ -919,7 +921,7 @@ def table_to_image(norm_d,
 
     if os.path.exists(normDir):
         shutil.rmtree(normDir)
-    os.mkdir(normDir)
+    os.makedirs(normDir)
 
     ranking_feature, corr = generate_feature_correlation_ranking(data=norm_d, method=fea_dist_method,
                                                                  save_path = normDir)
@@ -982,8 +984,26 @@ def table_to_image(norm_d,
                                         original_feature_names=original_feature_names,
                                         image_folder=normDir + '/data',
                                         image_folder_interpretability=normDir + '/data_interpretability',
-                                        file_name='', interpretability=interpretability
+                                        file_name='', interpretability=interpretability,
+                                        min_v=0.0, max_v=1.0
                                         )
+
+    if test_d is not None:
+        # The feature-to-pixel assignment (index, coordinate) learned on the training partition is applied
+        # unchanged to the test partition. No information from the test partition is used to build the mapping.
+        test_d = test_d[norm_d.columns]
+        os.makedirs(normDir_test, exist_ok=True)
+        generate_image_data(data=test_d,
+                            index=index[min_id, :],
+                            num_row=scale[0],
+                            num_column=scale[1],
+                            coord=coordinate,
+                            original_feature_names=original_feature_names,
+                            image_folder=normDir_test + '/data',
+                            image_folder_interpretability=normDir_test + '/data_interpretability',
+                            file_name='', interpretability=interpretability,
+                            min_v=0.0, max_v=1.0
+                            )
 
     output = open(normDir + '/Results.pkl', 'wb')
     cp.dump(norm_d, output)
@@ -997,4 +1017,4 @@ def table_to_image(norm_d,
     cp.dump(coordinate, output)
     cp.dump(err, output)
     cp.dump(time, output)
-    output.close()
+    output.close()

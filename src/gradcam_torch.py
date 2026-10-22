@@ -15,7 +15,8 @@ import cv2
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 import os
-from utils.dataset_creation import create_datasets
+from utils.dataset_creation import create_split_datasets
+import pandas as pd
 from torchvision import transforms
 
 logger = logging.getLogger(__name__)
@@ -274,26 +275,34 @@ def process_and_overlay_heatmaps(test_loader, test_loader_inter, gradcam, output
 
             print(f"Guardado: {combined_path}")
 
-def read_save_legend(path):
-    path_aux= path.rpartition('/')[0]
-    path_aux2=os.path.join(path_aux, 'data_interpretability', 'legend.png')
-    img= cv2.imread(path_aux2)
-    # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    transform = transforms.ToTensor()
-    img_tensor = transform(img)
-    database = path_aux.rpartition('/')[2]
-    path_save = path_aux.rpartition('/')[0].rpartition('/')[0].rpartition('/')[0]
-    final_path= os.path.join(path_save,'reports', 'heatmaps', database,'dataset_from_png','legend.png')
-    save_image(img_tensor, final_path)
-    # cv2.imwrite(final_path, img)
+def build_interpretability_folder(path_test):
+    """
+    Arranges the interpretability images of the test partition (data_interpretability/_<i>_image.png) in ImageFolder
+    format, using the same names and labels as the test images, so that both datasets are iterated in the same order.
+    """
+    labels = pd.read_csv(os.path.join(path_test, 'labels.csv'))['label'].tolist()
+    path_folder = os.path.join(path_test, 'dataset_from_png_interpretability')
+    if not os.path.exists(path_folder):
+        for label in sorted(set(labels)):
+            os.makedirs(os.path.join(path_folder, str(label)))
+        for i, label in enumerate(labels):
+            shutil.copy(os.path.join(path_test, 'data_interpretability', '_{}_image.png'.format(i)),
+                        os.path.join(path_folder, str(label), '_{}_image.png'.format(i)))
+    return path_folder
+
+
+def load_image_folder(path_folder, channels, min_shape):
+    shape = cnn.determine_size_from_folder(path_folder, min_shape)
+    img_transforms = transforms.Compose([transforms.ToTensor(), transforms.Resize(shape, antialias=True)])
+    img_loader = cnn.img_loader_one_channel if channels == 1 else cv2.imread
+    return cnn.CustomImageFolder(root=path_folder, transform=img_transforms, loader=img_loader)
 
 
 def parse_arguments(parser):
-    parser.add_argument('--dataset', default='hepatitis', type=str)
+    parser.add_argument('--dataset', default='ionos', type=str)
     parser.add_argument('--noise_type', default='heterogeneous', type=str)
-    parser.add_argument('--augmented', default=False, type=bool)
     parser.add_argument('--channels', default=1, type=int)
-    parser.add_argument('--seed', default=24, type=int)
+    parser.add_argument('--seed', default=cons.SEEDS[0], type=int)
     parser.add_argument('--n_jobs', default=14, type=int)
     return parser.parse_args()
 
@@ -303,62 +312,39 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='interpretability')
     args = parse_arguments(parser)
 
-    n_procs = cpu_count()
-    n_jobs = n_procs if args.n_jobs == -1 or args.n_jobs > n_procs else args.n_jobs
-    logger.info('n_jobs for tab_to_image_fs: {}'.format(n_jobs))
+    model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
+                                       'model_cnn_classification_{}_{}.pt'.format(args.noise_type, args.dataset)))
+    model = torch.load(model_file_path, map_location=torch.device('cpu'), weights_only=False)
 
-    if not args.augmented:
-        path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}')
-        path_images_interpretability = create_datasets(path=path, dataset_name=args.dataset, noise_type=args.noise_type,
-                                                       interpretability=True)
-        path_images = create_datasets(path=path, dataset_name=args.dataset, noise_type=args.noise_type,
-                                      interpretability=False)
-    else:
-        test_path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}', 'ctgan',
-                        'test_{}_seed_{}'.format(args.dataset, args.seed))
-        train_path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}',
-                                'ctgan',
-                                'train_{}_seed_{}'.format(args.dataset, args.seed))
-
-
-    if 'second' in args.dataset:
-        model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                           'model_cnn_classification_{}_{}.pt'.format(
-                                               args.noise_type, 'fram')))
-    else:
-        model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                           'model_cnn_classification_{}_{}.pt'.format(
-                                               args.noise_type, args.dataset)))
-    model = torch.load(model_file_path, map_location=torch.device('cpu'))
-
-    split_sed_values = model['split_seed']
-    if args.seed in split_sed_values:
-        index = split_sed_values.index(args.seed)
-    else:
-       raise ValueError(f"Bad Seed: {args.seed} not valid.")
+    split_seed_values = model['split_seed']
+    if args.seed not in split_seed_values:
+        raise ValueError(f"Bad Seed: {args.seed} not valid.")
+    index = split_seed_values.index(args.seed)
 
     trained_model = model['trained_model'][index]
     best_config = model['best_config'][index]
     device = torch.device('cpu')
+    trained_model.to(device)
 
-    read_save_legend(path_images_interpretability)
-    shape_inter, train_subset_inter, val_subset_inter, test_subset_inter, num_classes = cnn.dataset_partition(
-                        dataset=args.dataset, noise_type=args.noise_type, channels=3, min_shape=best_config['min_shape'], path_images=path_images_interpretability, split_seed=args.seed, interpretability=True , gradcam=True
-                    )
+    # Grad-CAM is computed on the test partition of the selected seed, whose images were generated with the
+    # LM-IGTD mapping learned on the corresponding training partition.
+    path_seed = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}',
+                             f'seed_{args.seed}')
+    _, path_test_images = create_split_datasets(path_seed)
+    path_test_inter = build_interpretability_folder(os.path.join(path_seed, 'test'))
 
-    shape, train_subset, val_subset, test_subset, num_classes = cnn.dataset_partition(
-                        dataset=args.dataset, noise_type=args.noise_type, channels=args.channels, min_shape=best_config['min_shape'], path_images=path_images, split_seed=args.seed, interpretability=False, gradcam=True)
+    test_dataset = load_image_folder(path_test_images, args.channels, best_config['min_shape'])
+    test_dataset_inter = load_image_folder(path_test_inter, 3, best_config['min_shape'])
 
-    print(shape)
-    batch_size = int(len(train_subset)/best_config['n_batches']) + 1
-    print(batch_size)
-    test_loader = DataLoader(test_subset, batch_size=batch_size, shuffle=False, pin_memory=False)
-    test_loader_inter = DataLoader(test_subset_inter, batch_size=batch_size, shuffle=False, pin_memory=False)
-
-    print(test_loader)
-    print(len(test_loader))
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, pin_memory=False)
+    test_loader_inter = DataLoader(test_dataset_inter, batch_size=32, shuffle=False, pin_memory=False)
 
     gradcam = GradCAM(trained_model, target_layer_name="cnn2", verbose=True)
+    output_directory = os.path.join(cons.PATH_PROJECT_DIR, 'reports', 'heatmaps',
+                                    f'image_{args.noise_type}_{args.dataset}', f'seed_{args.seed}')
+    os.makedirs(output_directory, exist_ok=True)
+    legend_path = os.path.join(path_seed, 'test', 'data_interpretability', 'legend.png')
+    if os.path.exists(legend_path):
+        shutil.copy(legend_path, os.path.join(output_directory, 'legend.png'))
 
-    output_directory = "./gradcam_results"
     process_and_overlay_heatmaps(test_loader, test_loader_inter, gradcam, output_directory)

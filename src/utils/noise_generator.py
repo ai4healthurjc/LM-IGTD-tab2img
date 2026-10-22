@@ -17,6 +17,8 @@ class NoiseFeatureGenerator():
         self.n_original_vars = n_original_vars
         self.n_new_vars = n_new_vars
         self.seed = seed
+        self.df_meta = None
+        self.dict_categories = {}
 
     def _generate_gaussian_noise(self, v_var, noise_power):
         np.random.seed(self.seed)
@@ -33,7 +35,8 @@ class NoiseFeatureGenerator():
         swap_idx = np.random.choice(idx, size=n_row_changes)
         for e in swap_idx:
             np.random.seed(e)
-            v_var_noisy.iloc[e] = np.random.choice(list(set(v_var)))
+            categories = self.dict_categories.get(v_var.name, sorted(set(v_var)))
+            v_var_noisy.iloc[e] = np.random.choice(list(categories))
 
         # col_vals = np.random.permutation(df_noisy_categorical_data[:, pos_cat_feature])
         # swap_idx = np.random.choice(idx, size=n_row_changes)
@@ -47,6 +50,10 @@ class NoiseFeatureGenerator():
         return noisy_binary_data, 'salt_pepper'
 
     def fit(self, X, y=None):
+        # Feature types and categories are learned on the training partition, so that the test partition receives
+        # exactly the same noise model (same noisy columns, noise type and noise parameters).
+        self.df_meta, _, _ = identify_type_features(X)
+        self.dict_categories = {col: sorted(set(X[col])) for col in X.columns}
         return self
 
     def _split_v_noise_power(self):
@@ -59,7 +66,9 @@ class NoiseFeatureGenerator():
 
     def transform(self, df_x):
         df_copy = df_x
-        df_meta, _, _ = identify_type_features(df_x)
+        if self.df_meta is None:
+            self.fit(df_x)
+        df_meta = self.df_meta
         df_data_noisy = pd.DataFrame()
 
         list_col_names = df_copy.columns.to_list()
@@ -82,4 +91,4 @@ class NoiseFeatureGenerator():
                 noisy_col_name = '{}_{}_{}_{}'.format(var_name, type_noise, noise_power, idx)
                 df_data_noisy[noisy_col_name] = v_var_noisy
 
-        return df_data_noisy
+        return df_data_noisy

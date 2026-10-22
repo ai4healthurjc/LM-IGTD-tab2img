@@ -7,7 +7,7 @@ import coloredlogs
 import logging
 import time
 from joblib import Parallel, delayed
-from utils.loader import load_preprocessed_dataset
+from utils.loader import load_split_dataset, get_split_dataset_path
 from utils.preprocessing import preprocess_for_clustering, preprocess_for_fs
 import utils.consts as consts
 from utils.noise_generator import NoiseFeatureGenerator
@@ -31,7 +31,7 @@ def compute_cvi(x_data, name):
     dun = []
     db = []
     cop_final = []
-    for e in np.arange(2, 10, 1):
+    for e in np.arange(2, 11, 1):  # K_clust in {2, ..., 10}
         ss_mean = []
         ch_mean = []
         dun_mean = []
@@ -140,12 +140,14 @@ def create_noisy_dataset(df_data,noise_type,labels,noise_generator,n_new_vars,ra
         raise ValueError("Incorrect noise type: choose between homogeneous and heterogeneous")
     return df_concat
 def create_two_noisy_dataset(df_data,df_data2,noise_type,labels,noise_generator,n_new_vars,random_state):
+    # df_data: training partition, df_data2: test partition. The noise model is fitted on the training partition.
+    noise_generator.fit(df_data)
     df_data_noisy = noise_generator.transform(df_data.copy())
     df_data_noisy2 = noise_generator.transform(df_data2.copy())
     df_concat2 = pd.concat([df_data2.copy(), df_data_noisy2], axis=1)
     if noise_type == 'homogeneous':
         df_concat = pd.concat([df_data.copy(), df_data_noisy], axis=1)
-
+        df_concat2 = df_concat2[df_concat.columns]
     elif noise_type == 'heterogeneous_squared':
         df_concat= select_noisy_features(df_data, df_data_noisy,labels, n_new_vars, random_state,squared=True)
         df_concat2=df_concat2[df_concat.columns]
@@ -345,30 +347,20 @@ def parse_arguments(parser):
     parser.add_argument('--categorical_encoding', default='count', type=str)
     parser.add_argument('--clustering_method', default='spectral', type=str)
     parser.add_argument('--n_jobs', default=15, type=int)
-    parser.add_argument('--n_boots', default=2000, type=int)
+    parser.add_argument('--n_boots', default=100, type=int)  # N = 100 candidate augmentations
     parser.add_argument('--n_new_vars', default=3, type=int)
     parser.add_argument('--verbose', default=1, type=int)
     parser.add_argument('--noise_type', default='heterogeneous', type=str)
-    parser.add_argument('--dataset2', default= None, type=str)
     return parser.parse_args()
 
 
-def save_final_results(df_concat, y_label,noise_type,dataset,df_features,second_dataset=False):
-    df_concat_with_labels = pd.concat([df_concat, pd.Series(y_label, name='label')], axis=1)
-
-    if second_dataset:
-        csv_file_path = str(
-            Path.joinpath(consts.PATH_PROJECT_NOISY_DATASET, 'noisy_dataset_{}_second.csv'.format(
-                "_".join([noise_type, dataset]))))
-    else:
-        csv_file_path = str(
-            Path.joinpath(consts.PATH_PROJECT_NOISY_DATASET, 'noisy_dataset_{}.csv'.format(
-                "_".join([noise_type, dataset]))))
-
+def save_split_results(df_concat, y_label, noise_type, dataset, seed, partition):
+    df_concat_with_labels = df_concat.reset_index(drop=True)
+    df_concat_with_labels['label'] = list(y_label)
+    csv_file_path = str(get_split_dataset_path(dataset, noise_type, seed, partition))
     df_concat_with_labels.to_csv(csv_file_path, index=False)
-    print("_".join([noise_type, dataset]))
-    logger.info('Raw dataset: {}'.format(df_features.shape))
-    logger.info('New dataset: {}'.format(df_concat.shape))
+    logger.info('Saved {} ({} samples, {} features)'.format(csv_file_path, df_concat_with_labels.shape[0],
+                                                            df_concat_with_labels.shape[1] - 1))
 
 
 if __name__ == '__main__':
@@ -378,42 +370,29 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='noise generator')
     args = parse_arguments(parser)
 
-    path_dataset, df_features, y_label = load_preprocessed_dataset(args.dataset, args.categorical_encoding)
+    for seed in consts.SEEDS:
+        # The augmentation (candidate generation, spectral clustering and Silhouette-based selection) is fitted on
+        # the training partition only. The selected configuration (noisy features retained and their per-feature
+        # noise parameters, with the same random seed) is then applied unchanged to the test partition.
+        x_train, y_train, x_test, y_test = load_split_dataset(args.dataset, 'preprocessed', seed,
+                                                              args.categorical_encoding)
+        x_test = x_test[x_train.columns]
 
-    if args.dataset2 is not None:
-        path_dataset2, df_features2, y_label2 = load_preprocessed_dataset(args.dataset2, args.categorical_encoding)
-        if list(np.sort(df_features2.columns)) != list(np.sort(df_features.columns)):
-            raise ValueError("The name of the columns are not equal in both datasets")
+        df_train_noisy, df_test_noisy = generate_n_noisy_features(x_train.reset_index(drop=True),
+                                                                  y_train,
+                                                                  n_new_features=args.n_new_vars,
+                                                                  clustering_method=args.clustering_method,
+                                                                  noise_type=args.noise_type,
+                                                                  n_boots=args.n_boots,
+                                                                  n_jobs=args.n_jobs,
+                                                                  save_name="_".join(
+                                                                      [args.dataset, args.noise_type,
+                                                                       args.categorical_encoding,
+                                                                       'seed', str(seed)]),
+                                                                  dataset2=x_test.reset_index(drop=True)
+                                                                  )
 
-        df_concat,df_concat2 = generate_n_noisy_features(df_features,
-                                              y_label,
-                                              n_new_features=args.n_new_vars,
-                                              clustering_method=args.clustering_method,
-                                              noise_type=args.noise_type,
-                                              n_boots=args.n_boots,
-                                              n_jobs=args.n_jobs,
-                                              save_name="_".join(
-                                                  [args.dataset, args.noise_type, args.categorical_encoding]),
-                                              dataset2=df_features2
-                                              )
+        save_split_results(df_train_noisy, y_train, args.noise_type, args.dataset, seed, 'train')
+        save_split_results(df_test_noisy, y_test, args.noise_type, args.dataset, seed, 'test')
 
-        save_final_results(df_concat2, y_label2, args.noise_type, args.dataset2,df_features2, second_dataset=True)
-    else:
-        df_concat,df_concat2 = generate_n_noisy_features(df_features,
-                                                         y_label,
-                                              n_new_features=args.n_new_vars,
-                                              clustering_method=args.clustering_method,
-                                              noise_type=args.noise_type,
-                                              n_boots=args.n_boots,
-                                              n_jobs=args.n_jobs,
-                                              save_name="_".join(
-                                                  [args.dataset, args.noise_type, args.categorical_encoding]),
-                                              dataset2=args.dataset2
-                                              )
-
-    save_final_results(df_concat, y_label, args.noise_type, args.dataset,df_features, second_dataset=False)
-
-
-
-
-
+    logger.info('Execution time: {:.1f} s'.format(time.time() - start_time))

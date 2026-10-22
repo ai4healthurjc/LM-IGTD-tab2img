@@ -300,9 +300,6 @@ def compute_correlations(x_var_name,y_var_name,categorical_vars,x_var,y_var,list
             if len(set(x_var)) == 2 and len(set(y_var)) == 2:
                 pair_corr = np.array(phik.phik_from_array(x_var, y_var))
                 pair_corr = scaler_phi.transform(np.asarray(pair_corr).reshape(-1,1))
-            elif len(set(x_var)) != 2 and len(set(y_var)) != 2:
-                pair_corr = cramers_corr(x_var, y_var)
-                pair_corr = scaler_cramer.transform(np.asarray(pair_corr).reshape(-1,1))
             else:
                 pair_corr = np.array(phik.phik_from_array(x_var, y_var))
                 pair_corr = scaler_phi.transform(np.asarray(pair_corr).reshape(-1,1))
@@ -349,9 +346,6 @@ def compute_correlations_normalization(pairs,data,categorical_vars):
                 if len(set(x_var)) == 2 and len(set(y_var)) == 2:
                     pair_corr = np.array(phik.phik_from_array(x_var, y_var))
                     phi_list.append(pair_corr)
-                elif len(set(x_var)) != 2 and len(set(y_var)) != 2:
-                    pair_corr = cramers_corr(x_var, y_var)
-                    cramer_list.append(pair_corr)
                 else:
                     pair_corr = np.array(phik.phik_from_array(x_var, y_var))
                     phi_list.append(pair_corr)
@@ -408,10 +402,11 @@ def compute_corr_mixed_dataset(data, categorical_vars,save_path ):
         x_var = data.iloc[:, i]
         y_var = data.iloc[:, j]
         pair_corr=compute_correlations(x_var_name, y_var_name, categorical_vars, x_var, y_var,scalers)
+        pair_corr = float(np.ravel(pair_corr)[0])
         m_corr[i, j] = pair_corr
         m_corr[j, i] = pair_corr
 
     v_var_names = data.columns
     df_corr = pd.DataFrame(m_corr, columns=v_var_names, index=v_var_names)
     plot_heatmap(df_corr, save_path,'original')
-    return df_corr
+    return df_corr

@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import cv2
-from utils.dataset_creation import create_datasets
+from utils.dataset_creation import create_split_datasets
 from new_cnn_models import Cnn, find_best_model, dataset_partition
 import utils.consts as cons
 import torch
@@ -163,22 +163,20 @@ def training(model, n_epochs, device, train_loader, val_loader, criterion, optim
                 else:
                     labels = labels.long()
 
-                try:
-                    if len(labels) > 1:
-                        outputs = torch.squeeze(model(inputs))
-                        if num_classes == 2:
-                            predicted = (outputs.data >= 0.5)
-                        else:
-                            predicted = torch.argmax(outputs.data, dim=1)
-                        total += labels.size(0)
-                        correct += (predicted == labels).sum().item()
-                        loss2 = criterion(outputs, labels)
-                        val_loss += loss2.cpu().numpy()
-                        val_steps += 1
+                outputs = model(inputs)
+                if num_classes == 2:
+                    outputs = outputs.view(-1)
+                    labels = labels.view(-1)
+                    predicted = (torch.sigmoid(outputs) >= 0.5).float()
+                else:
+                    predicted = torch.argmax(outputs, dim=1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+                loss2 = criterion(outputs, labels)
+                val_loss += loss2.cpu().numpy()
+                val_steps += 1
 
-                        valid_loop.set_postfix(valid_loss=val_loss/val_steps)
-                except:
-                    continue
+                valid_loop.set_postfix(valid_loss=val_loss/val_steps)
 
         epoch_loss = val_loss / val_steps
         epoch_accuracy = correct / total
@@ -187,7 +185,7 @@ def training(model, n_epochs, device, train_loader, val_loader, criterion, optim
             minimum_loss = epoch_loss
             best_loss = epoch_loss
             best_acc = epoch_accuracy
-            best_model_state = model.state_dict()
+            best_model_state = copy.deepcopy(model.state_dict())
 
         scheduler.step(epoch_loss)
         epoch_loss_list.append(epoch_loss)
@@ -215,20 +213,14 @@ def testing(model, test_loader, num_classes, device='cpu'):
         for data in test_loader:
             images, labels = data
             images, labels = images.to(dtype=torch.float).to(device), labels.to(dtype=torch.float).to(device)
-            if len(labels) > 1:
-                outputs = torch.squeeze(model(images))
-                if num_classes==2:
-                    try:
-                        prediction = np.array([int(np.round(i.cpu(), 0)) for i in outputs.data])
-                    except TypeError:
-                        prediction = np.array([int(np.round(outputs.data.cpu(), 0))])
-                else:
-                    prediction = torch.argmax(outputs, dim=1).cpu().numpy()
-                labels = np.array([int(i.cpu()) for i in labels])
-                predict_label.extend(prediction)
-                real_label.extend(labels)
+            outputs = model(images)
+            if num_classes == 2:
+                prediction = (torch.sigmoid(outputs.view(-1)) >= 0.5).long().cpu().numpy()
             else:
-                continue
+                prediction = torch.argmax(outputs, dim=1).cpu().numpy()
+            labels = labels.view(-1).long().cpu().numpy()
+            predict_label.extend(prediction)
+            real_label.extend(labels)
     results = compute_classification_performance(real_label, predict_label)
 
     return results
@@ -238,9 +230,6 @@ def parse_arguments(parser):
     parser.add_argument('--dataset', default='hepatitis', type=str)
     parser.add_argument('--noise_type', default='heterogeneous', type=str)
     parser.add_argument('--channels', default=1, type=int)
-    parser.add_argument('--augmented', default=0, type=int)
-    parser.add_argument('--type_sampling', default='over', type=str)
-    parser.add_argument('--oversampler', default='ctgan', type=str)
     parser.add_argument('--type_padding', default='none', type=str)
     parser.add_argument('--padding', default=50, type=int)
     parser.add_argument('--type_interpolation', default='none', type=str)
@@ -272,36 +261,14 @@ if __name__ == "__main__":
 
     for split_seed in cons.SEEDS:
 
-        if not args.augmented:
-            path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}')
-            path_dataset_txt, path_dataset_png = create_datasets(path, args.dataset, args.noise_type)
+        # Train/test images of this seed, generated with the LM-IGTD transformation fitted on the training partition
+        path_seed = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}',
+                                 f'seed_{split_seed}')
+        path_dataset_txt = create_split_datasets(path_seed)
 
-        else:
-            file_name = 'train_{}_{}_{}_{}_seed_{}'.format(args.dataset, args.noise_type, args.type_sampling,
-                                                           args.oversampler)
-            path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}', 'ctgan',
-                                file_name)
-            train_path_dataset_txt, train_path_dataset_png = create_datasets(path, args.dataset, args.noise_type,
-                                                                             file_name)
-
-            file_name = 'test_{}_{}_{}_{}_seed_{}'.format(args.dataset, args.noise_type, args.type_sampling,
-                                                          args.oversampler)
-            path = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}', 'ctgan',
-                                file_name)
-            test_path_dataset_txt, test_path_dataset_png = create_datasets(path, args.dataset, args.noise_type,
-                                                                           file_name)
-
-            path_dataset_txt, path_dataset_png = ([train_path_dataset_txt, test_path_dataset_txt],
-                                                  [train_path_dataset_png, test_path_dataset_png])
-
-        if not args.augmented:
-            result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                                'result_cnn_classification_{}_{}_{}.pt'.format(
-                                                    args.noise_type, args.dataset, split_seed)))
-        else:
-            result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                                'result_cnn_classification_{}_{}_{}_ctgan.pt'.format(
-                                                    args.noise_type, args.dataset, split_seed)))
+        result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
+                                            'result_cnn_classification_{}_{}_{}.pt'.format(
+                                                args.noise_type, args.dataset, split_seed)))
 
         if not os.path.exists(result_file_path):
 
@@ -331,8 +298,7 @@ if __name__ == "__main__":
                 'noise_type': args.noise_type,
                 'path_images': path_dataset_txt,
                 'channels': args.channels,
-                'split_seed': split_seed,
-                'augmented': args.augmented
+                'split_seed': split_seed
             }
 
             """
@@ -375,7 +341,7 @@ if __name__ == "__main__":
                 config=config,
                 metric="loss",
                 mode="min",
-                num_samples=50,
+                num_samples=100,  # budget of 100 BOHB trials
                 search_alg=algo,
                 scheduler=scheduler
             )
@@ -383,14 +349,8 @@ if __name__ == "__main__":
             torch.save(result, result_file_path)
             ray.shutdown()
 
-    if not args.augmented:
-        metrics_file_path = str(os.path.join(cons.PATH_PROJECT_METRICS,
-                                'metrics_classification_cnn_{}_{}.csv'.format(args.noise_type,
-                                                                              args.dataset)))
-    else:
-        metrics_file_path = str(os.path.join(cons.PATH_PROJECT_METRICS,
-                                'metrics_classification_cnn_{}_{}_ctgan.csv'.format(args.noise_type,
-                                                                                    args.dataset)))
+    metrics_file_path = str(os.path.join(cons.PATH_PROJECT_METRICS,
+                            'metrics_classification_cnn_{}_{}.csv'.format(args.noise_type, args.dataset)))
 
     if not os.path.exists(metrics_file_path):
         list_acc_values = []
@@ -402,28 +362,21 @@ if __name__ == "__main__":
 
         for split_seed in cons.SEEDS:
 
-            if not args.augmented:
-                result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                                    'result_cnn_classification_{}_{}_{}.pt'.format(
-                                                        args.noise_type, args.dataset, split_seed)))
-            else:
-                result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                                    'result_cnn_classification_{}_{}_{}_ctgan.pt'.format(
-                                                        args.noise_type, args.dataset, split_seed)))
+            path_seed = os.path.join(cons.PATH_PROJECT_TAB_TO_IMAGE, f'image_{args.noise_type}_{args.dataset}',
+                                     f'seed_{split_seed}')
+            path_dataset_txt = create_split_datasets(path_seed)
+            result_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
+                                                'result_cnn_classification_{}_{}_{}.pt'.format(
+                                                    args.noise_type, args.dataset, split_seed)))
 
             result = torch.load(result_file_path)
             best_trial = result.get_best_trial("loss", "min", "last")
             best_config = best_trial.config
             print(f"Best trial config: {best_config}")
 
-            if args.augmented:
-                shape, train_subset, val_subset, test_subset, n_classes = dataset_partition(
-                    args.dataset, args.noise_type, args.channels, best_config['min_shape'], path_dataset_txt, split_seed, augmentation=True
-                )
-            else:
-                shape, train_subset, val_subset, test_subset, n_classes = dataset_partition(
-                    args.dataset, args.noise_type, args.channels, best_config['min_shape'], path_dataset_txt, split_seed
-                )
+            shape, train_subset, val_subset, test_subset, n_classes = dataset_partition(
+                args.dataset, args.noise_type, args.channels, best_config['min_shape'], path_dataset_txt, split_seed
+            )
 
             torch.manual_seed(0)
             if torch.cuda.is_available():
@@ -535,14 +488,9 @@ if __name__ == "__main__":
                                               ignore_index=True)
         df_metrics_classification.to_csv(metrics_file_path, index=False)
 
-        if not args.augmented:
-            model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                               'model_cnn_classification_{}_{}.pt'.format(
-                                                   args.noise_type, args.dataset)))
-        else:
-            model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
-                                               'model_cnn_classification_{}_{}_ctgan.pt'.format(
-                                                   args.noise_type, args.dataset)))
+        model_file_path = str(os.path.join(cons.PATH_PROJECT_SAVE_MODEL,
+                                           'model_cnn_classification_{}_{}.pt'.format(
+                                               args.noise_type, args.dataset)))
 
         torch.save(models, model_file_path)
 

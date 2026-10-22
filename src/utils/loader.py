@@ -245,7 +245,7 @@ def load_by_dataset_name(dataset_id, type_dataset):
         df = pd.read_csv(str(path_dataset))
         print(df)
         y_label = df['label']
-        y_label = y_label.replace("negative", 0).replace("compensated_hypothyroid", 1).replace("primary_hypothyroid", 1).replace("secondary_hypothyroid", 1)
+        y_label = y_label.replace("negative", 0).replace("compensated_hypothyroid", 1).replace("primary_hypothyroid", 2).replace("secondary_hypothyroid", 2)
         features = df.drop(['label'], axis=1)
         features = features.drop(['id'], axis=1)
 
@@ -501,3 +501,30 @@ def load_images_interpretability(dataset_name, noise_type):
         return images
     else:
         raise ValueError("Dataset {} identifier is not recognized!".format(dataset_name))
+
+
+def get_split_dataset_path(dataset_name, kind, seed, partition, categorical_encoding='count'):
+    """
+    Path of the train or test partition of a dataset for a given seed.
+    kind: 'preprocessed' (output of main.py) or the noise type ('homogeneous' / 'heterogeneous',
+    output of noise_generator.py).
+    """
+    if kind == 'preprocessed':
+        return Path.joinpath(consts.PATH_PROJECT_DATA_PREPROCESSED,
+                             '{}_{}_seed_{}_{}.csv'.format(dataset_name, categorical_encoding, seed, partition))
+    return Path.joinpath(consts.PATH_PROJECT_NOISY_DATASET,
+                         'noisy_dataset_{}_{}_seed_{}_{}.csv'.format(kind, dataset_name, seed, partition))
+
+
+def load_split_dataset(dataset_name, kind, seed, categorical_encoding='count'):
+    """
+    Loads the train and test partitions of a dataset for a given seed.
+    Returns x_train, y_train, x_test, y_test.
+    """
+    out = []
+    for partition in ['train', 'test']:
+        path_dataset = get_split_dataset_path(dataset_name, kind, seed, partition, categorical_encoding)
+        df = pd.read_csv(path_dataset)
+        logger.info('Loaded dataset: {}'.format(path_dataset))
+        out.extend([df.drop('label', axis=1), df['label']])
+    return out[0], out[1], out[2], out[3]

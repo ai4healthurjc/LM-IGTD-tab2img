@@ -347,3 +347,47 @@ def impute_null_values(dataset, categorical_columns, numeric_columns):
             categorical_columns.remove(col)
 
     return dataset, categorical_columns, numeric_columns
+
+
+def encode_train_test(x_train, x_test, encoding_type='count'):
+    """
+    Fits the imputation and the categorical encoding on the training partition only and applies them,
+    unchanged, to the test partition.
+
+    Feature types are identified on the training partition with identify_type_features. Missing values are
+    imputed with the training mode (categorical/binary features) or the training mean (numerical features).
+    Categories unseen in training are encoded as 0.
+    """
+    x_train = x_train.copy()
+    x_test = x_test.copy()
+
+    _, categorical_columns, numeric_columns = identify_type_features(x_train, discrete_threshold=10)
+    categorical_columns = list(categorical_columns)
+    numeric_columns = list(numeric_columns)
+
+    x_train[numeric_columns] = x_train[numeric_columns].apply(pd.to_numeric, errors='coerce')
+    x_test[numeric_columns] = x_test[numeric_columns].apply(pd.to_numeric, errors='coerce')
+
+    mode_values = x_train[categorical_columns].mode().iloc[0] if categorical_columns else pd.Series(dtype=float)
+    mean_values = x_train[numeric_columns].mean()
+    x_train[categorical_columns] = x_train[categorical_columns].fillna(mode_values)
+    x_test[categorical_columns] = x_test[categorical_columns].fillna(mode_values)
+    x_train[numeric_columns] = x_train[numeric_columns].fillna(mean_values)
+    x_test[numeric_columns] = x_test[numeric_columns].fillna(mean_values)
+
+    if encoding_type == 'count':
+        encoder = ce.CountEncoder(cols=categorical_columns, handle_unknown='value', handle_missing='value')
+    elif encoding_type == 'one_hot':
+        encoder = ce.OneHotEncoder(cols=categorical_columns, handle_unknown='value', handle_missing='value')
+    else:
+        raise ValueError('Encoding {} not supported in encode_train_test'.format(encoding_type))
+
+    x_train_encoded = encoder.fit_transform(x_train)
+    x_test_encoded = encoder.transform(x_test).fillna(0)
+
+    # Features that are constant in the training partition carry no information
+    constant_columns = x_train_encoded.columns[x_train_encoded.nunique() <= 1]
+    x_train_encoded = x_train_encoded.drop(columns=constant_columns)
+    x_test_encoded = x_test_encoded.drop(columns=constant_columns)
+
+    return x_train_encoded, x_test_encoded

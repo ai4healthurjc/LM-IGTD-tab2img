@@ -168,3 +168,5 @@ wrapt==1.14.1
 xarray==2023.1.0
 yarl==1.9.2
 zipp==3.17.0
+colorcet==3.0.1
+grad-cam==1.5.0

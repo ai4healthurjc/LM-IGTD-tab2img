@@ -13,9 +13,8 @@ import logging
 import coloredlogs
 from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, accuracy_score, recall_score
 from sklearn.linear_model import LogisticRegression
-from tabpfn import TabPFNClassifier
 import utils.consts as consts
-from utils.loader import load_preprocessed_dataset, normalize_dataframe, load_dataset_augmented
+from utils.loader import load_split_dataset, normalize_dataframe
 from sklearn.ensemble import RandomForestClassifier
 
 
@@ -39,8 +38,8 @@ def compute_classification_performance(y_true: np.array,
         specificity_val = 0
 
         for i in range(num_classes):
-            true_negatives = sum(cm[j, j] for j in range(num_classes)) - cm[i, i]
-            false_positives = sum(cm[:, i]) - cm[i, i]
+            true_negatives = cm.sum() - (cm[i, :].sum() + cm[:, i].sum() - cm[i, i])
+            false_positives = cm[:, i].sum() - cm[i, i]
             specificity_val += true_negatives / (true_negatives + false_positives)
 
         specificity_val /= num_classes
@@ -63,14 +62,8 @@ def binarize_pred(y_pred):
 
 
 def parse_arguments(parser):
-    parser.add_argument('--dataset', default='fram', type=str)
+    parser.add_argument('--dataset', default='ionos', type=str)
     parser.add_argument('--categorical_encoding', default='count', type=str)
-    parser.add_argument('--with_noise', default=0, type=int)
-    parser.add_argument('--noise_type', default='homogeneous', type=str)
-    parser.add_argument('--augmented', default=0, type=int)
-    parser.add_argument('--type_sampling', default='over', type=str)
-    parser.add_argument('--oversampler', default='ctgan', type=str)
-    parser.add_argument('--n_seeds', default=5, type=int)
     parser.add_argument('--n_jobs', default=4, type=int)
     parser.add_argument('--classifier', default='tabpfn', type=str)
     parser.add_argument('--type_encoding', default='standard', type=str)
@@ -88,31 +81,16 @@ list_auc_values = []
 
 for idx in consts.SEEDS:
 
-    if not args.augmented:
-        path_dataset, features, y_label = load_preprocessed_dataset(args.dataset, args.categorical_encoding)
+    # Same stratified train/test partitions as the image-based pipeline (main.py); the encoding is fitted on the
+    # training partition only.
+    X_train, Y_train, X_test, Y_test = load_split_dataset(args.dataset, 'preprocessed', idx, args.categorical_encoding)
 
-    if args.augmented:
-        if args.with_noise:
-            file_name, X_train_scaled, X_test_scaled, Y_train, Y_test = load_dataset_augmented(
-                args.with_noise, idx, args.dataset, args.type_sampling, args.oversampler, args.noise_type)
-            rus = RandomUnderSampler(sampling_strategy='all', random_state=idx)
-            X_test_scaled, Y_test = rus.fit_resample(X_test_scaled, Y_test)
-        else:
-            file_name, X_train_scaled, X_test_scaled, Y_train, Y_test = load_dataset_augmented(
-                args.with_noise, idx, args.dataset, args.type_sampling, args.oversampler, noise_type=None)
-            rus = RandomUnderSampler(sampling_strategy='all', random_state=idx)
-            X_test_scaled, Y_test = rus.fit_resample(X_test_scaled, Y_test)
-    else:
-        X_train, X_test, Y_train, Y_test = train_test_split(features, y_label, stratify=y_label, test_size=0.2, random_state=idx)
+    X_train_scaled, X_test_scaled = normalize_dataframe(X_train, X_test, args.type_encoding)
+    rus = RandomUnderSampler(sampling_strategy='all', random_state=idx)
 
-        X_train_scaled, X_test_scaled = normalize_dataframe(X_train, X_test, args.type_encoding)
-        rus = RandomUnderSampler(sampling_strategy='all', random_state=idx)
-
-        X_train_scaled, Y_train = rus.fit_resample(X_train_scaled, Y_train)
-        print('Resampled dataset shape %s' % pd.DataFrame(Y_train).value_counts())
-        print('Resampled dataset shape %s' % Y_test.value_counts())
-
-
+    X_train_scaled, Y_train = rus.fit_resample(X_train_scaled, Y_train)
+    print('Resampled dataset shape %s' % pd.DataFrame(Y_train).value_counts())
+    print('Test dataset shape %s' % Y_test.value_counts())
 
     if args.classifier == 'svm':
 
@@ -138,12 +116,10 @@ for idx in consts.SEEDS:
 
 
     elif args.classifier == 'tabpfn':
-        model_clf = TabPFNClassifier( device='cuda', random_state=idx)
-
-        hyperparams_clf = {
-            'n_estimators': [10, 20, 30],
-
-        }
+        # TabPFN is used with its default configuration (no dataset-specific tuning)
+        from tabpfn import TabPFNClassifier
+        model_clf = TabPFNClassifier(device='cuda', random_state=idx)
+        hyperparams_clf = None
 
 
     elif args.classifier == 'knn':
@@ -174,15 +150,21 @@ for idx in consts.SEEDS:
             'min_samples_split': range(2, 10, 2)
         }
 
-    grid_cv = GridSearchCV(estimator=model_clf, param_grid=hyperparams_clf, scoring='accuracy', cv=5, n_jobs=args.n_jobs)
-    grid_cv.fit(X_train_scaled, Y_train)
+    if hyperparams_clf is None:
+        clf_model = model_clf
+        clf_model.fit(X_train_scaled, Y_train)
+    else:
+        # Grid search with 5-fold cross-validation on the training partition, optimizing the AUCROC
+        scoring = 'roc_auc' if len(np.unique(Y_train)) == 2 else 'roc_auc_ovr'
+        grid_cv = GridSearchCV(estimator=model_clf, param_grid=hyperparams_clf, scoring=scoring, cv=5,
+                               n_jobs=args.n_jobs)
+        grid_cv.fit(X_train_scaled, Y_train)
+        clf_model = grid_cv.best_estimator_
+        logger.info('Classifier {}, best_params: {}'.format(args.classifier, grid_cv.best_params_))
+        clf_model.fit(X_train_scaled, Y_train)
 
-    clf_model = grid_cv.best_estimator_
-    clf_model.fit(X_train_scaled, Y_train)
     y_pred = clf_model.predict(X_test_scaled)
     y_prob = clf_model.predict_proba(X_test_scaled)
-
-    logger.info('Classifier {}, best_params: {}'.format(args.classifier, grid_cv.best_params_))
 
     if args.classifier == 'lasso':
         y_pred = binarize_pred(y_pred)
@@ -208,7 +190,7 @@ print('specificity:', mean_std_specificity)
 print('recall:', mean_std_recall)
 print('AUC:', mean_std_auc)
 
-exp_name = '{}+{}+{}'.format(args.dataset, args.classifier, args.n_seeds)
+exp_name = '{}+{}+{}'.format(args.dataset, args.classifier, len(consts.SEEDS))
 # exp_name = '{}+{}'.format(exp_name, 'fs') if args.flag_fs else exp_name
 
 new_row_auc = {'model': exp_name,
@@ -235,16 +217,7 @@ new_row_accuracy = {'model': exp_name,
                     'std': mean_std_accuracy[1]
                     }
 
-if args.augmented:
-    if args.with_noise:
-        csv_file_path = str(Path.joinpath(consts.PATH_PROJECT_METRICS,
-                                          'metrics_classification_{}_{}_aug_bal.csv'.format(args.dataset, args.noise_type)))
-    else:
-        csv_file_path = str(Path.joinpath(consts.PATH_PROJECT_METRICS,
-                                          'metrics_classification_{}_aug_bal.csv'.format(args.dataset)))
-else:
-    csv_file_path = str(Path.joinpath(consts.PATH_PROJECT_METRICS,
-                                      'metrics_classification_{}.csv'.format(args.dataset)))
+csv_file_path = str(Path.joinpath(consts.PATH_PROJECT_METRICS, 'metrics_classification_{}.csv'.format(args.dataset)))
 
 if os.path.exists(csv_file_path):
     try:

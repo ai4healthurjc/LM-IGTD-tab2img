@@ -22,32 +22,17 @@ class CustomImageFolder(datasets.ImageFolder):
         img_name = self.imgs[index][0]
 
         return image, label, img_name
-import os
-import cv2
-import numpy as np
-from imblearn.under_sampling import RandomUnderSampler
-from sklearn.model_selection import train_test_split
-import utils.loader as loader
-from torchvision import transforms, datasets
-import torch
-import torch.nn as nn
-from torch.utils.data import Subset, DataLoader
-from ray import train
-import pandas as pd
 
 
-class CustomImageFolder(datasets.ImageFolder):
-    def __init__(self, root, transform=None, loader=None):
-        super().__init__(root, transform=transform, loader=loader)
+VALIDATION_SIZE = 0.15  # fraction of the (undersampled) training partition used for validation
 
-    def __getitem__(self, index):
-        image, label = super().__getitem__(index)
 
-        img_name = self.imgs[index][0]
-
-        return image, label, img_name
-
-def partition_augmentation(path_images, channels, img_transforms, split_seed):
+def partition_train_test(path_images, channels, img_transforms, split_seed):
+    """
+    path_images = [train_dir, test_dir], both in ImageFolder format and generated with the LM-IGTD mapping
+    learned on the training partition. Random undersampling and the validation split are applied to the
+    training partition only; the test partition is left untouched.
+    """
     if channels == 1:
         train_dataset = datasets.ImageFolder(root=path_images[0], transform=img_transforms,
                                              loader=img_loader_one_channel)
@@ -65,9 +50,9 @@ def partition_augmentation(path_images, channels, img_transforms, split_seed):
     print('Resampled label train dataset shape %s')
     print(pd.DataFrame(y_train_re).value_counts())
     idx_train, idx_val, y_train, y_val = train_test_split(idx_train_re, y_train_re, stratify=y_train_re,
-                                                          test_size=0.2, random_state=split_seed)
-    train_subset = Subset(train_dataset, idx_train)
-    val_subset = Subset(train_dataset, idx_val)
+                                                          test_size=VALIDATION_SIZE, random_state=split_seed)
+    train_subset = Subset(train_dataset, idx_train.reshape(-1))
+    val_subset = Subset(train_dataset, idx_val.reshape(-1))
     return train_subset, val_subset, test_dataset, len(set(labels))
 
 
@@ -99,7 +84,7 @@ def partition(gradcam, channels, path_images, img_transforms, split_seed):
     print(pd.DataFrame(y_test).value_counts())
 
     idx_train, idx_val, y_train, y_val = train_test_split(idx_train_re, y_train_re, stratify=y_train_re,
-                                                          test_size=0.2, random_state=split_seed)
+                                                          test_size=VALIDATION_SIZE, random_state=split_seed)
     train_subset = Subset(full_dataset, idx_train.reshape(-1))
     val_subset = Subset(full_dataset, idx_val.reshape(-1))
     test_subset = Subset(full_dataset, idx_test.reshape(-1))
@@ -109,13 +94,17 @@ def partition(gradcam, channels, path_images, img_transforms, split_seed):
 
 def dataset_partition(dataset, noise_type, channels, min_shape, path_images, split_seed, interpretability=False,
                       gradcam=False, augmentation=False):
-    shape = determine_size(dataset, noise_type, min_shape, interpretability=interpretability)
+    if isinstance(path_images, (list, tuple)):
+        shape = determine_size_from_folder(path_images[0], min_shape)
+    else:
+        shape = determine_size(dataset, noise_type, min_shape, interpretability=interpretability)
     img_transforms = transforms.Compose([
             transforms.ToTensor(),
             transforms.Resize(shape, antialias=True),
     ])
-    if augmentation:
-        train_subset, val_subset, test_subset, n_labels =partition_augmentation(path_images, channels, img_transforms, split_seed)
+    if isinstance(path_images, (list, tuple)) or augmentation:
+        train_subset, val_subset, test_subset, n_labels = partition_train_test(path_images, channels,
+                                                                               img_transforms, split_seed)
     else:
         train_subset, val_subset, test_subset, n_labels = partition(gradcam, channels, path_images, img_transforms, split_seed)
 
@@ -152,21 +141,25 @@ def determine_size(dataset_id, noise_type, min_shape, other_path=None, interpret
     return shape
 
 
+def determine_size_from_folder(path_folder, min_shape):
+    first_label = sorted(os.listdir(path_folder))[0]
+    first_image = sorted(os.listdir(os.path.join(path_folder, first_label)))[0]
+    og_shape = img_loader_one_channel(os.path.join(path_folder, first_label, first_image)).shape
+    shape = og_shape
+    while min(shape) < min_shape:
+        shape = tuple(x + y for x, y in zip(shape, og_shape))
+    return shape
+
+
 def img_loader_one_channel(path):
     return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
 
 def find_best_model(config, data):
-    if data['augmented']:
-        shape, train_subset, val_subset,  _ ,num_classes = dataset_partition(
-            data['dataset'], data['noise_type'], data['channels'], config['min_shape'], data['path_images'],
-            data['split_seed'], augmentation=True
-        )
-    else:
-        shape, train_subset, val_subset, _ , num_classes= dataset_partition(
-            data['dataset'], data['noise_type'], data['channels'], config['min_shape'], data['path_images'],
-            data['split_seed']
-        )
+    shape, train_subset, val_subset, _, num_classes = dataset_partition(
+        data['dataset'], data['noise_type'], data['channels'], config['min_shape'], data['path_images'],
+        data['split_seed']
+    )
 
     torch.manual_seed(0)
     if torch.cuda.is_available():
@@ -362,17 +355,12 @@ class Cnn(nn.Module):
         self.dropout1 = nn.Dropout(self.dropout_rate,)
         self.drop1bn = nn.BatchNorm1d(self.dense_units)
 
-        # second fully connected layer
-        self.fc2 = nn.Linear(self.dense_units, 1)
-        self.sig = nn.Sigmoid()
-
+        # second fully connected layer: one logit (binary) or num_classes logits (multiclass). The sigmoid/softmax
+        # is applied by the loss (BCEWithLogitsLoss / CrossEntropyLoss) and at prediction time.
         if num_classes == 2:
             self.fc2 = nn.Linear(self.dense_units, 1)
-            self.activation = nn.Sigmoid()  # Sigmoid para clasificación binaria
-            # Para clasificación binaria (una neurona)
         else:
             self.fc2 = nn.Linear(self.dense_units, num_classes)
-            self.activation = None  # Softmax para clasificación multiclasess# Para clasificación multiclase (num_classes neuronas)
 
     def forward(self, x):
         """
@@ -395,7 +383,5 @@ class Cnn(nn.Module):
         x = self.fc1bn(x)
         x = self.dropout1(x)
         x = self.fc2(x)
-        if self.num_classes == 2:
-            x = self.activation(x)
         return x
 

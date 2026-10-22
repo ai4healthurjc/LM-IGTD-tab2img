@@ -35,93 +35,71 @@ After downloading the tabular datasets, place the files in the following folders
 
 - `data/raw/bbdd_binary` (tabular data from binary datasets), `data/raw/bbdd_multiclass` (tabular data from multiclass datasets)
 
-## Preprocess datasets 
+## Experimental protocol
 
-To preprocess binary or multiclass datasets (e.g., ionos) using a chosen encoding method (e.g., count encoding), run:
+All experiments use the same stratified train/test partitions (80%/20%), one per random seed in `src/utils/consts.py` (`SEEDS`). To avoid any information leakage, every fitted component of the pipeline is learned on the training partition only and then applied, unchanged, to the test partition:
+
+1. imputation and categorical (count) encoding;
+2. the noise-based feature augmentation (candidate generation, spectral clustering and Silhouette-based selection); the selected configuration (noisy features and per-feature noise parameters, with the same random seed) is applied once to the test partition, and no noise is resampled at inference time;
+3. the min-max scaling and the LM-IGTD feature-to-pixel assignment (the feature ranking matrix is computed on the training partition, while the pixel ranking matrix depends only on the image grid);
+4. random undersampling and the validation split (15% of the training partition), used for CNN hyperparameter optimization (BOHB, 100 trials) and early stopping.
+
+## Preprocess datasets
+
+To create the train/test partitions of a binary or multiclass dataset (e.g., ionos) with count encoding, run:
 
 ```console
 python src/main.py --categorical_encoding=count --dataset=ionos --type_dataset=binary
 ```
 
-Preprocessed datasets will be saved to: `data/processed`
+Partitions are saved to `data/processed` as `<dataset>_count_seed_<seed>_train.csv` and `<dataset>_count_seed_<seed>_test.csv`.
 
+## Unsupervised noise-based feature augmentation
 
-## Introduce unsupervised noise-based feature augmentation:
-
-To apply homogeneous noise:
+Homogeneous noise (HoNG):
 ```console
-python3 src/noise_generator.py --categorical_encoding=count --dataset=ionos --n_new_vars=3 --noise_type=homogeneous
+python src/noise_generator.py --categorical_encoding=count --dataset=ionos --n_new_vars=3 --noise_type=homogeneous
 ```
-To apply heterogeneous noise:
+Heterogeneous noise (HeNG):
 ```console
-python3 src/noise_generator.py --categorical_encoding=count --dataset=ionos --n_new_vars=3 --noise_type=heterogeneous
-```
-
-Augmented datasets will be stored in: `reports/noisy_dataset`
-
-## Convert tabular to images using LM-IGTD:
-
-To convert original (non-augmented) tabular to image using LM-IGTD:
-```console
-python3 src/tab2img.py --noise_type=preprocessed --dataset=ionos --interpretability=1
-```
-Images will be saved to: `reports/tab_to_image/image_preprocessed_ionos/`
-- `data/`: images without interpretability
-- `data_interpretability/`: interpretable images with feature mapping
-
-To convert homogeneous noise-augmented data to image using LM-IGTD:
-```console
-python3 src/tab2img.py --noise_type=homogeneous --dataset=ionos --interpretability=1
-```
-Images will be saved to: `reports/tab_to_image/image_homogeneous_ionos/`
-- `data/`: images without interpretability
-- `data_interpretability/`: interpretable images with feature mapping
-
-To convert heterogeneous noise-augmented data to image using LM-IGTD:
-```console
-python3 src/tab2img.py --noise_type=heterogeneous --dataset=ionos --interpretability=1
-```
-Images will be saved to: `reports/tab_to_image/image_heterogeneous_ionos/`
-- `data/`: images without interpretability
-- `data_interpretability/`: interpretable images with feature mapping
-
-## Train CNN on LM-IGTD images with pytorch:
-
-For original images:
-```console
-python src/cnn_pytorch.py --noise_type=preprocessed --n_cpus=15 --n_gpus=1 --dataset=ionos
+python src/noise_generator.py --categorical_encoding=count --dataset=ionos --n_new_vars=3 --noise_type=heterogeneous
 ```
 
-For homogeneous noise images:
+The augmentation is fitted on each training partition and applied to the corresponding test partition. Augmented partitions are saved to `reports/noisy_dataset` as `noisy_dataset_<noise_type>_<dataset>_seed_<seed>_{train,test}.csv`.
+
+## Convert tabular data to images with LM-IGTD
+
 ```console
-python src/cnn_pytorch.py --noise_type=homogeneous --n_cpus=15 --n_gpus=1 --dataset=ionos
+python src/tab2img.py --noise_type=preprocessed --dataset=ionos --interpretability=1   # LM-IGTD (no augmentation)
+python src/tab2img.py --noise_type=homogeneous --dataset=ionos --interpretability=1    # LM-IGTD-HoNG
+python src/tab2img.py --noise_type=heterogeneous --dataset=ionos --interpretability=1  # LM-IGTD-HeNG
 ```
 
-For heterogeneous noise images:
+Images are saved to `reports/tab_to_image/image_<noise_type>_<dataset>/seed_<seed>/{train,test}/`:
+- `data/`: images (txt and png);
+- `data_interpretability/`: images annotated with the feature-to-pixel mapping;
+- `labels.csv`: class label of each image.
+
+## Train the CNN on LM-IGTD images
+
 ```console
 python src/cnn_pytorch.py --noise_type=heterogeneous --n_cpus=15 --n_gpus=1 --dataset=ionos
 ```
 
-## Generate saliency maps (Grad-CAM) in LM-IGTD images:
+Use `--noise_type=preprocessed` or `--noise_type=homogeneous` for the other variants. Metrics (mean and standard deviation across seeds) are saved to `reports/metrics` and trained models to `reports/models`.
 
-For original images:
+## Tabular baselines
+
 ```console
-python3 src/gradcam_torch.py --noise_type=preprocessed --n_jobs=50  --dataset=ionos
+python src/tabular.py --dataset=ionos --classifier=rf
 ```
-Images will be saved to: `reports/heatmaps/image_preprocessed_ionos`
 
-For homogeneous noise images:
+Available classifiers: `dt`, `rf`, `svm`, `lasso`, `knn` (grid search with 5-fold cross-validation on the training partition, optimizing the AUCROC) and `tabpfn` (default configuration). They use the same partitions as the image-based pipeline.
+
+## Grad-CAM saliency maps
+
 ```console
-python3 src/gradcam_torch.py --noise_type=homogeneous --n_jobs=50  --dataset=ionos
+python src/gradcam_torch.py --noise_type=heterogeneous --dataset=ionos --seed=24
 ```
-Images will be saved to: `reports/heatmaps/image_homogeneous_ionos`
 
-
-For heterogeneous noise images:
-```console
-python3 src/gradcam_torch.py --noise_type=heterogeneous --n_jobs=50  --dataset=ionos
-```
-Images will be saved to: `reports/heatmaps/image_heterogeneous_ionos`
-
-
-
+Saliency maps are computed on the test partition of the selected seed and saved to `reports/heatmaps/image_<noise_type>_<dataset>/seed_<seed>/`.

@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib
-from tensorflow.python.ops.gen_experimental_dataset_ops import list_dataset
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -10,13 +9,12 @@ import scipy.cluster.hierarchy as sch
 from pathlib import Path
 import os
 from matplotlib.colors import ListedColormap
-from matplotlib.cm import get_cmap
+from matplotlib.pyplot import get_cmap
 from matplotlib.ticker import FuncFormatter
 from sklearn.manifold import TSNE
 import umap
 import seaborn
 import utils.consts as consts
-from aeon.visualisation import plot_critical_difference
 
 def plot_distributions(df: pd.DataFrame,name:str,color='red'):
     for e in df.columns:
@@ -108,7 +106,7 @@ def plot_cvi(cvi, names, name_save, save_path):
     for j in range(len(cvi)):
         figure, axis = plt.subplots(1)
         figure.set_size_inches(3, 5)
-        plt.plot(np.arange(2, 10, 1), cvi[j])
+        plt.plot(np.arange(2, 2 + len(cvi[j]), 1), cvi[j])
         plt.xticks(fontname='serif', fontsize=16)
         plt.yticks(fontname='serif', fontsize=16)
         plt.xlabel('Number of clusters', fontname='serif', fontsize=17)
@@ -288,16 +286,18 @@ def plot_results(list_databases, list_models, metric ='auc'):
         df_final_auc[model]=list_auc
         df_final_std[model]=list_auc_std
 
+    from aeon.visualisation import plot_critical_difference
     plot = plot_critical_difference(df_final_auc.values, df_final_auc.columns, test='nemenyi', correction='bonferroni',
                                     alpha=0.1, width=10)
     plot[0].savefig(os.path.join(consts.PATH_PROJECT_FIGURES,f"cd_models_{metric}.pdf"), bbox_inches="tight")
 
     plot_aucroc_with_errorbars(list_databases, [df_final_auc,df_final_std], metric)
 
-list_databases =  ['saheart', 'ionos', 'german', 'crx',  'diabetes' ]
-list_models = ['DT', 'RF', 'SVM', 'LASSO', 'LM-IGTD', 'LM-IGTD-HoNG', 'LM-IGTD-HeNG']
+if __name__ == '__main__':
+    list_databases = ['saheart', 'ionos', 'crx', 'diabetes']
+    list_models = ['DT', 'RF', 'SVM', 'LASSO', 'LM-IGTD', 'LM-IGTD-HoNG', 'LM-IGTD-HeNG']
 
-plot_results(list_databases, list_models)
-plot_results(list_databases, list_models, 'sensitivity')
-plot_results(list_databases, list_models, 'specificity')
-plot_results(list_databases, list_models, 'accuracy')
+    plot_results(list_databases, list_models)
+    plot_results(list_databases, list_models, 'sensitivity')
+    plot_results(list_databases, list_models, 'specificity')
+    plot_results(list_databases, list_models, 'accuracy')
