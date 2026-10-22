@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from multiprocessing import cpu_count
 from utils.loader import load_split_dataset
+from utils.preprocessing import identify_type_features
 from igtd.igtd_functions import table_to_image
 import logging
 import coloredlogs
@@ -45,12 +46,19 @@ def tab_to_image_train_test(x_train, x_test, path_seed):
     num_row, num_col = get_grid_size(x_train_scaled.shape[1])
     logger.info('Image grid: {} x {} for {} features'.format(num_row, num_col, x_train_scaled.shape[1]))
 
+    # Pixel distance: Euclidean for purely numerical data, Gower for mixed-type data (computed on pixel coordinates)
+    distances = args.distances
+    if distances == 'auto':
+        _, categorical_vars, _ = identify_type_features(x_train, discrete_threshold=10)
+        distances = 'Gower' if len(categorical_vars) > 0 else 'Euclidean'
+    logger.info('Pixel distance: {}'.format(distances))
+
     # The feature ranking matrix is computed on the training partition only; the resulting feature-to-pixel
     # assignment is then applied unchanged to the test partition.
     table_to_image(x_train_scaled,
                    [num_row, num_col],
                    args.corr,
-                   args.distances,
+                   distances,
                    save_image_size,
                    args.max_step,
                    args.val_step,
@@ -72,8 +80,9 @@ def parse_arguments(parser):
     parser.add_argument('--max_step', default=2000, type=int)
     parser.add_argument('--val_step', default=300, type=int)
     parser.add_argument('--err', default='squared', type=str)
-    parser.add_argument('--distances', default='Euclidean', type=str,
-                        help='Distance between pixel coordinates: Euclidean, Manhattan or Gower')
+    parser.add_argument('--distances', default='auto', type=str,
+                        help="Distance between pixel coordinates: 'auto' (Euclidean for purely numerical data, "
+                             "Gower for mixed-type data), Euclidean, Manhattan or Gower")
     parser.add_argument('--interpretability', default=1, type=int)
     return parser.parse_args()
 

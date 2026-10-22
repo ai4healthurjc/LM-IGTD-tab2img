@@ -95,21 +95,18 @@ for idx in consts.SEEDS:
     if args.classifier == 'svm':
 
         hyperparams_clf = {
-            'C': np.logspace(-1, 1, 4)
+            'C': np.logspace(-1, 1, 4),
+            'gamma': [1e-2, 1e-3, 1e-4, 1e-5]
         }
 
         # model_clf = LinearSVC(max_iter=100000, random_state=idx)
         model_clf = SVC(probability=True, max_iter=500, random_state=idx)
 
     elif args.classifier == 'dt':
-        length_train = len(X_train_scaled)
-        length_15_percent_val = int(0.15 * length_train)
-        length_20_percent_val = int(0.20 * length_train)
-
         hyperparams_clf = {
-            'max_depth': range(2, 8, 2),
-            'min_samples_split': range(length_15_percent_val, length_20_percent_val),
-            # 'min_samples_split': range(2, 20),
+            'max_depth': [2, 4, 6, 8, 10, None],
+            'min_samples_split': list(range(2, 21)),
+            'min_samples_leaf': [1, 2, 5]
         }
 
         model_clf = DecisionTreeClassifier(random_state=idx)
@@ -141,13 +138,13 @@ for idx in consts.SEEDS:
 
     elif args.classifier == 'rf':
 
-        lenght_train = len(X_train_scaled)
         model_clf = RandomForestClassifier(n_jobs=-1, random_state=idx)
 
         hyperparams_clf = {
-            'n_estimators': [10, 20, 30],
-            'max_depth': range(2, 8, 2),
-            'min_samples_split': range(2, 10, 2)
+            'n_estimators': [100, 200, 500],
+            'max_depth': [4, 8, 16, None],
+            'min_samples_split': [2, 5, 10],
+            'max_features': ['sqrt', 'log2']
         }
 
     if hyperparams_clf is None:

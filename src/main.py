@@ -10,7 +10,7 @@ from utils.preprocessing import remove_null_variables, encode_train_test
 def parse_arguments(parser):
     parser.add_argument('--dataset', default='ionos', type=str)
     parser.add_argument('--type_dataset', default='binary', type=str)
-    parser.add_argument('--threshold_null_values', default=0.6, type=float)
+    parser.add_argument('--threshold_null_values', default=0.5, type=float)  # discard features with >50% missing
     parser.add_argument('--categorical_encoding', default='count', type=str)
     parser.add_argument('--test_size', default=0.2, type=float)
     return parser.parse_args()

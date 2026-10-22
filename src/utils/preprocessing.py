@@ -58,7 +58,7 @@ def remove_null_variables(df_features, y_label, threshold=0.5, null_value="?"):
     # Remove the null variables from the DataFrame
     df_without_nulls = features.drop(null_variables, axis=1)
 
-    print("The variables with more than 60% of the values as null are:", null_variables)
+    print("Variables with more than {:.0%} missing values (discarded):".format(threshold), list(null_variables))
     print(df_without_nulls)
     print(y_label.value_counts())
  
