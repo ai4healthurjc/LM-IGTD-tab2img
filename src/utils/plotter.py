@@ -300,4 +300,4 @@ if __name__ == '__main__':
     plot_results(list_databases, list_models)
     plot_results(list_databases, list_models, 'sensitivity')
     plot_results(list_databases, list_models, 'specificity')
-    plot_results(list_databases, list_models, 'accuracy')
+    plot_results(list_databases, list_models, 'accuracy')

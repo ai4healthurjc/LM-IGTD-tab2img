@@ -91,4 +91,4 @@ class NoiseFeatureGenerator():
                 noisy_col_name = '{}_{}_{}_{}'.format(var_name, type_noise, noise_power, idx)
                 df_data_noisy[noisy_col_name] = v_var_noisy
 
-        return df_data_noisy
+        return df_data_noisy

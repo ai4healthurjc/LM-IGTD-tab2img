@@ -409,4 +409,4 @@ def compute_corr_mixed_dataset(data, categorical_vars,save_path ):
     v_var_names = data.columns
     df_corr = pd.DataFrame(m_corr, columns=v_var_names, index=v_var_names)
     plot_heatmap(df_corr, save_path,'original')
-    return df_corr
+    return df_corr

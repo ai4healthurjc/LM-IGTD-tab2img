@@ -1017,4 +1017,4 @@ def table_to_image(norm_d,
     cp.dump(coordinate, output)
     cp.dump(err, output)
     cp.dump(time, output)
-    output.close()
+    output.close()
